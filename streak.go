@@ -80,27 +80,42 @@ func main() {
 	}
 
 	today := parseDate(time.Now().Add(time.Duration(*offset) * day).Format(dateFormat))
-	var updated bool
 	if *remove {
-		updated, err = removeFromStreak(calId, today)
+		_, err = removeFromStreak(calId, today)
 	} else {
-		updated, err = addToStreak(calId, today)
-		if updated && err == nil {
-			err = mergeAdjacentEvents(calId)
-		}
+		_, err = addToStreak(calId, today)
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func addToStreak(calId string, today time.Time) (mutated bool, err error) {
-	create := true
+func addToStreak(calId string, today time.Time) (updated bool, err error) {
+	var (
+		create = true
+		prev   *calendar.Event
+	)
 	err = iterateEvents(calId, func(e *calendar.Event, start, end time.Time) error {
+		if prev != nil {
+			// We extended the previous event; merge it with this one?
+			if prev.End.Date == e.Start.Date {
+				// Merge events.
+				// Extend this event to begin where the previous one did.
+				e.Start = prev.Start
+				_, err := service.Events.Update(calId, e.Id, e).Do()
+				if err != nil {
+					return err
+				}
+				// Delete the previous event.
+				return service.Events.Delete(calId, prev.Id).Do()
+			}
+			// We needn't look at any more events.
+			return nil
+		}
 		if start.After(today) {
 			if start.Add(-day).Equal(today) {
 				// This event starts tomorrow, update it to start today.
-				mutated = true
+				updated, create = true, false
 				e.Start.Date = today.Format(dateFormat)
 				_, err = service.Events.Update(calId, e.Id, e).Do()
 				return err
@@ -115,31 +130,32 @@ func addToStreak(calId string, today time.Time) (mutated bool, err error) {
 		}
 		if end.Equal(today) {
 			// This event ends today, update it to end tomorrow.
-			mutated = true
+			updated, create = true, false
 			e.End.Date = today.Add(day).Format(dateFormat)
 			_, err = service.Events.Update(calId, e.Id, e).Do()
-			return err
+			if err != nil {
+				return err
+			}
+			prev = e
+			// Continue to the next event to see if merge is necessary.
 		}
 		return Continue
 	})
-	if err != nil {
-		return
-	}
-	if !mutated && create {
+	if err == nil && create {
 		// No existing events cover or are adjacent to today, so create one.
-		mutated = true
+		updated = true
 		err = createEvent(calId, today, today.Add(day))
 	}
 	return
 }
 
-func removeFromStreak(calId string, today time.Time) (mutated bool, err error) {
+func removeFromStreak(calId string, today time.Time) (updated bool, err error) {
 	err = iterateEvents(calId, func(e *calendar.Event, start, end time.Time) error {
 		if start.After(today) || end.Before(today) || end.Equal(today) {
 			// This event is too far in the future or past.
 			return Continue
 		}
-		mutated = true
+		updated = true
 		if start.Equal(today) {
 			if end.Equal(today.Add(day)) {
 				// Remove event.
@@ -168,30 +184,6 @@ func removeFromStreak(calId string, today time.Time) (mutated bool, err error) {
 		return createEvent(calId, today.Add(day), end)
 	})
 	return
-}
-
-func mergeAdjacentEvents(calId string) error {
-	var prev *calendar.Event
-	var prevEnd time.Time
-	return iterateEvents(calId, func(e *calendar.Event, start, end time.Time) error {
-		if start.Equal(prevEnd) {
-			// Merge events.
-			// Extend this event to begin where the previous one did.
-			e.Start = prev.Start
-			_, err := service.Events.Update(calId, e.Id, e).Do()
-			if err != nil {
-				return err
-			}
-			// Delete the previous event.
-			err = service.Events.Delete(calId, prev.Id).Do()
-			if err != nil {
-				return err
-			}
-		}
-		prev = e
-		prevEnd = end
-		return Continue
-	})
 }
 
 var Continue = errors.New("continue")
