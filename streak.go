@@ -158,16 +158,16 @@ func removeFromStreak(calId string, today time.Time) (updated bool, err error) {
 		updated = true
 		if start.Equal(today) {
 			if end.Equal(today.Add(day)) {
-				// Remove event.
+				// Single day event; remove it.
 				return service.Events.Delete(calId, e.Id).Do()
 			}
-			// Shorten to begin tomorrow.
+			// Starts today; shorten to begin tomorrow.
 			e.Start.Date = start.Add(day).Format(dateFormat)
 			_, err := service.Events.Update(calId, e.Id, e).Do()
 			return err
 		}
 		if end.Equal(today.Add(day)) {
-			// Shorten to end today.
+			// Ends tomorrow; shorten to end today.
 			e.End.Date = today.Format(dateFormat)
 			_, err := service.Events.Update(calId, e.Id, e).Do()
 			return err
