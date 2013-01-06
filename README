@@ -24,6 +24,13 @@ idea is that you run this tool every day whenever you've done the thing that
 you're trying to push yourself to do. Then whenever you look at your Google
 Calendar you'll see your streaks and feel proud/ashamed of yourself.
 
+To get started, you first need to visit the Google APIs Console, create
+a project, and generate an OAuth2 API Client ID and Secret:
+	https://code.google.com/apis/console/
+(You want to choose "Client ID for installed applications".)
+Then set the STREAK_CLIENT_ID and STREAK_CLIENT_SECRET environment variables
+with your Client ID and Secret.
+
 Sample invocations:
 
 	streak

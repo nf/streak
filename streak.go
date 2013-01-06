@@ -39,12 +39,11 @@ func main() {
 	flag.Parse()
 
 	config := &oauth.Config{
-		ClientId:     "120233572441-d8vmojicfgje467joivr5a7j52dg2gnc.apps.googleusercontent.com",
-		ClientSecret: "6vu85BLgDWH49y5vGCDdgPWL",
+		ClientId:     os.Getenv("STREAK_CLIENT_ID"),
+		ClientSecret: os.Getenv("STREAK_CLIENT_SECRET"),
 		Scope:        "https://www.googleapis.com/auth/calendar",
 		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
 		TokenURL:     "https://accounts.google.com/o/oauth2/token",
-		RedirectURL:  "",
 	}
 
 	transport := &oauth.Transport{Config: config}
