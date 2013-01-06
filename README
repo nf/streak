@@ -33,6 +33,6 @@ Sample invocations:
 	streak -offset -1
 		Add yesterday to a streak (or create if none exists).
 	streak -offset -1 -remove
-		Remvoe yesterday from a streak
+		Remove yesterday from a streak
 
 Andrew Gerrand <adg@golang.rog>
