@@ -42,4 +42,4 @@ Sample invocations:
 	streak -offset -1 -remove
 		Remove yesterday from a streak
 
-Andrew Gerrand <adg@golang.rog>
+Andrew Gerrand <adg@golang.org>
