@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"code.google.com/p/goauth2/oauth"
@@ -96,77 +95,67 @@ func main() {
 	}
 }
 
-func addToStreak(calId string, today time.Time) (bool, error) {
-	events, err := service.Events.List(calId).Do()
-	if err != nil {
-		return false, err
-	}
-	items := events.Items
-	sort.Sort(eventsByStartDate(items))
-
-	for _, e := range items {
-		if e.Start.Date == "" || e.End.Date == "" {
-			// Skip non-all-day event.
-			continue
-		}
-		start, end := parseDate(e.Start.Date), parseDate(e.End.Date)
+func addToStreak(calId string, today time.Time) (mutated bool, err error) {
+	create := true
+	err = iterateEvents(calId, func(e *calendar.Event, start, end time.Time) error {
 		if start.After(today) {
 			if start.Add(-day).Equal(today) {
 				// This event starts tomorrow, update it to start today.
+				mutated = true
 				e.Start.Date = today.Format(dateFormat)
 				_, err = service.Events.Update(calId, e.Id, e).Do()
-				return true, err
+				return err
 			}
 			// This event is too far in the future.
-			continue
+			return Continue
 		}
 		if end.After(today) {
 			// Today fits inside this event, nothing to do.
-			return false, nil
+			create = false
+			return nil
 		}
 		if end.Equal(today) {
 			// This event ends today, update it to end tomorrow.
+			mutated = true
 			e.End.Date = today.Add(day).Format(dateFormat)
 			_, err = service.Events.Update(calId, e.Id, e).Do()
-			return true, err
+			return err
 		}
+		return Continue
+	})
+	if err != nil {
+		return
 	}
-
-	// No existing events cover or are adjacent to today, so create one.
-	return true, createEvent(calId, today, today.Add(day))
+	if !mutated && create {
+		// No existing events cover or are adjacent to today, so create one.
+		mutated = true
+		err = createEvent(calId, today, today.Add(day))
+	}
+	return
 }
 
-func removeFromStreak(calId string, today time.Time) (bool, error) {
-	events, err := service.Events.List(calId).Do()
-	if err != nil {
-		return false, err
-	}
-
-	for _, e := range events.Items {
-		if e.Start.Date == "" || e.End.Date == "" {
-			// Skip non-all-day event.
-			continue
-		}
-		start, end := parseDate(e.Start.Date), parseDate(e.End.Date)
+func removeFromStreak(calId string, today time.Time) (mutated bool, err error) {
+	err = iterateEvents(calId, func(e *calendar.Event, start, end time.Time) error {
 		if start.After(today) || end.Before(today) || end.Equal(today) {
 			// This event is too far in the future or past.
-			continue
+			return Continue
 		}
+		mutated = true
 		if start.Equal(today) {
 			if end.Equal(today.Add(day)) {
 				// Remove event.
-				return true, service.Events.Delete(calId, e.Id).Do()
+				return service.Events.Delete(calId, e.Id).Do()
 			}
 			// Shorten to begin tomorrow.
 			e.Start.Date = start.Add(day).Format(dateFormat)
-			_, err = service.Events.Update(calId, e.Id, e).Do()
-			return true, err
+			_, err := service.Events.Update(calId, e.Id, e).Do()
+			return err
 		}
 		if end.Equal(today.Add(day)) {
 			// Shorten to end today.
 			e.End.Date = today.Format(dateFormat)
-			_, err = service.Events.Update(calId, e.Id, e).Do()
-			return true, err
+			_, err := service.Events.Update(calId, e.Id, e).Do()
+			return err
 		}
 
 		// Split into two events.
@@ -174,35 +163,23 @@ func removeFromStreak(calId string, today time.Time) (bool, error) {
 		e.End.Date = today.Format(dateFormat)
 		_, err = service.Events.Update(calId, e.Id, e).Do()
 		if err != nil {
-			return true, err
+			return err
 		}
 		// Create second event that starts tomorrow.
-		return true, createEvent(calId, today.Add(day), end)
-	}
-	return false, nil
+		return createEvent(calId, today.Add(day), end)
+	})
+	return
 }
 
 func mergeAdjacentEvents(calId string) error {
-	events, err := service.Events.List(calId).Do()
-	if err != nil {
-		return err
-	}
-	items := events.Items
-	sort.Sort(eventsByStartDate(items))
-
+	var prev *calendar.Event
 	var prevEnd time.Time
-	for i, e := range items {
-		if e.Start.Date == "" || e.End.Date == "" {
-			// Skip non-all-day event.
-			continue
-		}
-		start, end := parseDate(e.Start.Date), parseDate(e.End.Date)
+	return iterateEvents(calId, func(e *calendar.Event, start, end time.Time) error {
 		if start.Equal(prevEnd) {
 			// Merge events.
 			// Extend this event to begin where the previous one did.
-			prev := items[i-1]
 			e.Start = prev.Start
-			_, err = service.Events.Update(calId, e.Id, e).Do()
+			_, err := service.Events.Update(calId, e.Id, e).Do()
 			if err != nil {
 				return err
 			}
@@ -212,9 +189,45 @@ func mergeAdjacentEvents(calId string) error {
 				return err
 			}
 		}
+		prev = e
 		prevEnd = end
+		return Continue
+	})
+}
+
+var Continue = errors.New("continue")
+
+type iteratorFunc func(e *calendar.Event, start, end time.Time) error
+
+func iterateEvents(calId string, fn iteratorFunc) error {
+	var nextPageToken string
+	for {
+		call := service.Events.List(calId)
+		call.SingleEvents(true)
+		call.OrderBy("startTime")
+		if nextPageToken != "" {
+			call.PageToken(nextPageToken)
+		}
+		events, err := call.Do()
+		if err != nil {
+			return err
+		}
+		for _, e := range events.Items {
+			if e.Start.Date == "" || e.End.Date == "" || e.Summary != evtSummary {
+				// Skip non-all-day event or non-streak events.
+				continue
+			}
+			start, end := parseDate(e.Start.Date), parseDate(e.End.Date)
+			if err := fn(e, start, end); err != Continue {
+				return err
+			}
+		}
+		nextPageToken = events.NextPageToken
+		if nextPageToken == "" {
+			return nil
+		}
 	}
-	return nil
+	panic("unreachable")
 }
 
 func createEvent(calId string, start, end time.Time) error {
@@ -247,9 +260,3 @@ func streakCalendarId() (string, error) {
 	}
 	return "", errors.New("couldn't find calendar named 'Streaks'")
 }
-
-type eventsByStartDate []*calendar.Event
-
-func (s eventsByStartDate) Len() int           { return len(s) }
-func (s eventsByStartDate) Less(i, j int) bool { return s[i].Start.Date < s[j].Start.Date }
-func (s eventsByStartDate) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
