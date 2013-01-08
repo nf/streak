@@ -38,7 +38,6 @@ const (
 var (
 	defaultCacheFile = filepath.Join(os.Getenv("HOME"), ".streak-request-token")
 	cachefile        = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
-	code             = flag.String("code", "", "OAuth Authorization Code")
 	offset           = flag.Int("offset", 0, "Day offset")
 	remove           = flag.Bool("remove", false, "Remove day from streak")
 )
@@ -47,8 +46,8 @@ func main() {
 	flag.Parse()
 
 	config := &oauth.Config{
-		ClientId:     os.Getenv("STREAK_CLIENT_ID"),
-		ClientSecret: os.Getenv("STREAK_CLIENT_SECRET"),
+		ClientId:     "120233572441-d8vmojicfgje467joivr5a7j52dg2gnc.apps.googleusercontent.com",
+		ClientSecret: "vfZkluBV6PTfGBWxfIIyXbMS",
 		Scope:        "https://www.googleapis.com/auth/calendar",
 		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
 		TokenURL:     "https://accounts.google.com/o/oauth2/token",
