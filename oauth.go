@@ -27,26 +27,36 @@ import (
 	"code.google.com/p/goauth2/oauth"
 )
 
+const (
+	visitMessage  = "Visit the URL below to authenticate this program:"
+	openedMessage = "Your browser has been opened to an authorization URL:"
+	resumeMessage = "This program will resume once authenticated."
+	closeMessage  = "You may now close this browser window."
+)
+
 func authenticate(transport *oauth.Transport) error {
 	code := make(chan string)
+
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return err
 	}
 	go http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "You may now close this browser window.")
+		fmt.Fprint(w, closeMessage)
 		code <- r.FormValue("code") // send code to OAuth flow
 		listener.Close()            // shut down HTTP server
 	}))
+
 	transport.Config.RedirectURL = fmt.Sprintf("http://%s/", listener.Addr().String())
 	url := transport.Config.AuthCodeURL("")
 	if err := openURL(url); err != nil {
-		fmt.Fprintln(os.Stderr, "Visit the URL below to authenticate this program:")
+		fmt.Fprintln(os.Stderr, visitMessage)
 	} else {
-		fmt.Fprintln(os.Stderr, "Your browser has been opened to an authorization URL:")
+		fmt.Fprintln(os.Stderr, openedMessage)
 	}
 	fmt.Fprintf(os.Stderr, "\n%s\n\n", url)
-	fmt.Fprintln(os.Stderr, "This program will resume once authenticated.")
+	fmt.Fprintln(os.Stderr, resumeMessage)
+
 	_, err = transport.Exchange(<-code)
 	return err
 }
@@ -57,7 +67,7 @@ func openURL(url string) error {
 	case "linux":
 		err = exec.Command("xdg-open", url).Start()
 	case "windows":
-		err = exec.Command("rundll32", url, "http://localhost:4001/").Start()
+		err = exec.Command("rundll32", url).Start()
 	case "darwin":
 		err = exec.Command("open", url).Start()
 	default:

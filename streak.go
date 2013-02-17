@@ -80,11 +80,12 @@ func main() {
 		Service: service,
 	}
 
-	today := parseDate(time.Now().Add(time.Duration(*offset) * day).Format(dateFormat))
+	today := time.Now().Add(time.Duration(*offset) * day)
+	today = parseDate(today.Format(dateFormat)) // normalize
 	if *remove {
-		_, err = cal.removeFromStreak(today)
+		err = cal.removeFromStreak(today)
 	} else {
-		_, err = cal.addToStreak(today)
+		err = cal.addToStreak(today)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -96,7 +97,7 @@ type Calendar struct {
 	*calendar.Service
 }
 
-func (c *Calendar) addToStreak(today time.Time) (updated bool, err error) {
+func (c *Calendar) addToStreak(today time.Time) (err error) {
 	var (
 		create = true
 		prev   *calendar.Event
@@ -121,7 +122,7 @@ func (c *Calendar) addToStreak(today time.Time) (updated bool, err error) {
 		if start.After(today) {
 			if start.Add(-day).Equal(today) {
 				// This event starts tomorrow, update it to start today.
-				updated, create = true, false
+				create = false
 				e.Start.Date = today.Format(dateFormat)
 				_, err = c.Events.Update(c.Id, e.Id, e).Do()
 				return err
@@ -136,7 +137,7 @@ func (c *Calendar) addToStreak(today time.Time) (updated bool, err error) {
 		}
 		if end.Equal(today) {
 			// This event ends today, update it to end tomorrow.
-			updated, create = true, false
+			create = false
 			e.End.Date = today.Add(day).Format(dateFormat)
 			_, err = c.Events.Update(c.Id, e.Id, e).Do()
 			if err != nil {
@@ -149,19 +150,17 @@ func (c *Calendar) addToStreak(today time.Time) (updated bool, err error) {
 	})
 	if err == nil && create {
 		// No existing events cover or are adjacent to today, so create one.
-		updated = true
 		err = c.createEvent(today, today.Add(day))
 	}
 	return
 }
 
-func (c *Calendar) removeFromStreak(today time.Time) (updated bool, err error) {
+func (c *Calendar) removeFromStreak(today time.Time) (err error) {
 	err = c.iterateEvents(func(e *calendar.Event, start, end time.Time) error {
 		if start.After(today) || end.Before(today) || end.Equal(today) {
 			// This event is too far in the future or past.
 			return Continue
 		}
-		updated = true
 		if start.Equal(today) {
 			if end.Equal(today.Add(day)) {
 				// Single day event; remove it.
