@@ -196,13 +196,11 @@ var Continue = errors.New("continue")
 type iteratorFunc func(e *calendar.Event, start, end time.Time) error
 
 func (c *Calendar) iterateEvents(fn iteratorFunc) error {
-	var nextPageToken string
+	var pageToken string
 	for {
-		call := c.Events.List(c.Id)
-		call.SingleEvents(true)
-		call.OrderBy("startTime")
-		if nextPageToken != "" {
-			call.PageToken(nextPageToken)
+		call := c.Events.List(c.Id).SingleEvents(true).OrderBy("startTime")
+		if pageToken != "" {
+			call.PageToken(pageToken)
 		}
 		events, err := call.Do()
 		if err != nil {
@@ -218,8 +216,8 @@ func (c *Calendar) iterateEvents(fn iteratorFunc) error {
 				return err
 			}
 		}
-		nextPageToken = events.NextPageToken
-		if nextPageToken == "" {
+		pageToken = events.NextPageToken
+		if pageToken == "" {
 			return nil
 		}
 	}
