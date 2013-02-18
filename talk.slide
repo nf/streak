@@ -1,0 +1,179 @@
+Streak
+Google APIs Client and OAuth2
+
+Andrew Gerrand
+adg@golang.org
+
+* Streak
+
+Streak is a command-line productivity tool based around the "Seinfeld method".
+
+	[Seinfeld] revealed a unique calendar system he uses to pressure
+	himself to write. Here's how it works.
+
+	He told me to get a big wall calendar that has a whole year on one page
+	and hang it on a prominent wall. The next step was to get a big red
+	magic marker.
+
+	He said for each day that I do my task of writing, I get to put a big
+	red X over that day. "After a few days you'll have a chain. Just keep
+	at it and the chain will grow longer every day. You'll like seeing that
+	chain, especially when you get a few weeks under your belt. Your only
+	job next is to not break the chain."
+
+	"Don't break the chain," he said again for emphasis.
+
+Streak maintains a calendar named "Streaks", adding and extending multi-day events to represent a chain or "streak."
+
+* My Streaks
+
+.image screenshot.png
+
+* User interface
+
+Add today to a streak (or create a streak if none exists):
+
+	$ streak
+
+Remove today from a streak:
+
+	$ streak -remove
+
+Add yesterday to a streak (or create if none exists):
+
+	$ streak -offset -1
+
+Remove yesterday from a streak:
+
+	$ streak -offset -1 -remove
+
+* Inside Streak
+
+Beyond the Go standard library, Streak has a two dependencies:
+
+- `google-api-go-client`, to access the Google Calendar API, and
+- `goauth2`, for OAuth2 authentication with Google.
+
+* How it works
+
+At startup:
+
+- Authenticate with OAuth2 and get access to the user's Calendar
+- Find the calendar named "Streaks"
+
+When adding a day to a streak:
+
+- Iterate through existing events
+- Determine whether to add new event or update an existing one
+
+When removing a day from a streak:
+
+- Iterate through existing events
+- Determine whether to delete or update the relevant event
+
+* Using the Calendar API
+
+Import the relevant package from the `google-api-go-client` repository:
+
+	import "code.google.com/p/google-api-go-client/calendar/v3"
+
+With an OAuth-authenticated HTTP client (more on this later), create a calendar service:
+
+	service, err := calendar.New(transport.Client())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+Make an API call with the service:
+
+	list, err := service.CalendarList.List().Do()
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range list.Items {
+		fmt.Println(entry.Summary)
+	}
+
+* Anatomy of an API call
+
+To list the user's calendars, first build an `*calendar.CalendarListCall` value:
+
+	call := service.CalendarList.List()
+
+Invoke the call's `Do` method, which returns a `*calendar.CalendarList` value:
+
+	list, err := call.Do()
+	if err != nil {
+		return "", err
+	}
+
+Then finally we can use the result:
+
+	for _, entry := range list.Items {
+		fmt.Println(entry.Summary)
+	}
+
+* Finding the "Streaks" calendar
+
+	const calSummary = "Streaks"
+
+.code streak.go /func streakCalendarId/,/^}/
+
+* The Calendar type
+
+So, at startup we create a service and find the Calendar ID:
+
+.code streak.go /service, err/
+
+.code streak.go /calId, err/
+
+All future operations will need these two things, so we'll put them in a `Calendar` type:
+
+.code streak.go /type Calendar/,/^}/
+
+.code streak.go /cal :=/,/}/
+
+* Listing events (1/2)
+
+Similar to listing calendars.
+
+First build an `*calendar.EventsListCall` value, and use its "method chaining" API to request only non-recurring events in chronological order:
+
+	call := c.Events.List(calId).SingleEvents(true).OrderBy("startTime")
+
+Invoke the call's `Do` method, which returns a `*calendar.Events` value:
+
+	events, err := call.Do()
+	if err != nil {
+		return err
+	}
+
+Then we can use the result:
+
+	for _, e := range events.Items {
+		// Do something with the event, e.
+	}
+
+* Listing events (2/2)
+
+Only 100 Events may be returned per API call, so we may need to make multiple calls to retrieve the full list. The `*Events` struct has a `NextPageToken` field for pagination.
+
+	var pageToken string
+	for {
+		call := c.Events.List(calId).SingleEvents(true).OrderBy("startTime")
+		if pageToken != "" {
+			call.PageToken(pageToken)
+		}
+		events, err := call.Do()
+		if err != nil {
+			return err
+		}
+		for _, e := range events.Items {
+			// Do something with the event, e.
+		}
+		pageToken = events.NextPageToken
+		if pageToken == "" {
+			break // This is the last page.
+		}
+	}
+
