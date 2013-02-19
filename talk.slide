@@ -23,9 +23,9 @@ Streak is a command-line productivity tool based around the "Seinfeld method".
 
 	"Don't break the chain," he said again for emphasis.
 
-Streak maintains a calendar named "Streaks", adding and extending multi-day events to represent a chain or "streak."
+Streak maintains a Google Calendar named "Streaks", adding and extending multi-day events to represent a chain or "streak."
 
-* My Streaks
+* My streaks
 
 .image screenshot.png
 
@@ -47,13 +47,6 @@ Remove yesterday from a streak:
 
 	$ streak -offset -1 -remove
 
-* Inside Streak
-
-Beyond the Go standard library, Streak has a two dependencies:
-
-- `google-api-go-client`, to access the Google Calendar API, and
-- `goauth2`, for OAuth2 authentication with Google.
-
 * How it works
 
 At startup:
@@ -64,12 +57,19 @@ At startup:
 When adding a day to a streak:
 
 - Iterate through existing events
-- Determine whether to add new event or update an existing one
+- Either add a new event or update an existing one
 
 When removing a day from a streak:
 
 - Iterate through existing events
-- Determine whether to delete or update the relevant event
+- Either delete or or update the relevant event
+
+* Inside Streak
+
+Beyond the Go standard library, Streak has a two dependencies:
+
+- `google-api-go-client`, to access the Google Calendar API, and
+- `goauth2`, for OAuth2 authentication with Google.
 
 * Using the Calendar API
 
@@ -82,16 +82,6 @@ With an OAuth-authenticated HTTP client (more on this later), create a calendar 
 	service, err := calendar.New(transport.Client())
 	if err != nil {
 		log.Fatal(err)
-	}
-
-Make an API call with the service:
-
-	list, err := service.CalendarList.List().Do()
-	if err != nil {
-		return "", err
-	}
-	for _, entry := range list.Items {
-		fmt.Println(entry.Summary)
 	}
 
 * Anatomy of an API call
@@ -121,15 +111,15 @@ Then finally we can use the result:
 
 * The Calendar type
 
-So, at startup we create a service and find the Calendar ID:
+All operations require a calendar service and the relevant calendar ID, so we'll put them in a `Calendar` type:
+
+.code streak.go /type Calendar/,/^}/
+
+At startup we create a service and find the Calendar ID, and store them in a `Calendar`:
 
 .code streak.go /service, err/
 
 .code streak.go /calId, err/
-
-All future operations will need these two things, so we'll put them in a `Calendar` type:
-
-.code streak.go /type Calendar/,/^}/
 
 .code streak.go /cal :=/,/}/
 
@@ -139,7 +129,7 @@ Similar to listing calendars.
 
 First build an `*calendar.EventsListCall` value, and use its "method chaining" API to request only non-recurring events in chronological order:
 
-	call := c.Events.List(calId).SingleEvents(true).OrderBy("startTime")
+	call := service.Events.List(calId).SingleEvents(true).OrderBy("startTime")
 
 Invoke the call's `Do` method, which returns a `*calendar.Events` value:
 
@@ -160,7 +150,7 @@ Only 100 Events may be returned per API call, so we may need to make multiple ca
 
 	var pageToken string
 	for {
-		call := c.Events.List(calId).SingleEvents(true).OrderBy("startTime")
+		call := service.Events.List(calId).SingleEvents(true).OrderBy("startTime")
 		if pageToken != "" {
 			call.PageToken(pageToken)
 		}
@@ -177,3 +167,232 @@ Only 100 Events may be returned per API call, so we may need to make multiple ca
 		}
 	}
 
+* Iterating over events (interface)
+
+We need to iterate through the events for both the add and remove operations, so it would be nice to abstract away this functionality somehow.
+
+What if we could just write this instead?
+
+	cal.iterateEvents(func(e *calendar.Event) error {
+		// Do something with the event, e.
+	})
+
+* Iterating over events (implementation)
+
+	func (c *Calendar) iterateEvents(fn func(e *calendar.Event) error) error {
+		var pageToken string
+		for {
+			call := c.Events.List(c.Id).SingleEvents(true).OrderBy("startTime")
+			if pageToken != "" {
+				call.PageToken(pageToken)
+			}
+			events, err := call.Do()
+			if err != nil {
+				return err
+			}
+			for _, e := range events.Items {
+				if err := fn(e); err != nil {
+					return err
+				}
+			}
+			pageToken = events.NextPageToken
+			if pageToken == "" {
+				return nil
+			}
+		}
+		panic("unreachable")
+	}
+
+* Iterating over events (explicit continue)
+
+We don't always want to iterate over the entire list, so we add a `Continue` `error` value that the iterator function must return to continue the iteration (otherwise the iterator returns with the given error).
+
+	var Continue = errors.New("continue")
+
+	func (c *Calendar) iterateEvents(fn func(e *calendar.Event) error) error {
+		// ...
+			for _, e := range events.Items {
+				if err := fn(e); err != Continue {
+					return err
+				}
+			}
+		// ...
+	}
+  
+	cal.iterateEvents(func(e *calendar.Event) error {
+		if e.Summary == "Foo" {
+			return nil // stop iterating
+		}
+		return Continue
+	})
+
+* Iterating over events (more specialization)
+
+There's some other common behavior we can put in the iterator.
+We only want all-day events named "Streak", and since we use the `time` package to perform computations on dates, we must convert the Calendar API's date strings to Go `time.Time` values.
+
+	type iteratorFunc func(e *calendar.Event, start, end time.Time) error
+
+	func (c *Calendar) iterateEvents(fn iteratorFunc) error {
+		// ...
+			for _, e := range events.Items {
+				if e.Start.Date == "" || e.End.Date == "" || e.Summary != evtSummary {
+					// Skip non-all-day event or non-streak events.
+					continue
+				}
+				start, end := parseDate(e.Start.Date), parseDate(e.End.Date)
+				if err := fn(e, start, end); err != Continue {
+					return err
+				}
+			}
+		// ...
+	}
+
+* Iterating over events (final form in use)
+
+This code to uses the iterator to find the duration of the longest event:
+
+	var longest time.Duration
+	cal.iterateEvents(func(e *calendar.Event, start, end time.Time) error {
+		if d := end.Sub(start); d > longest {
+			longest = d
+		}
+		return Continue
+	})
+	fmt.Println("Longest streak:", longest)
+
+Output:
+
+	Longest streak: 360h0m0s
+
+* Adding days to a streak (1/2)
+
+The `addToStreak` function adds the given date to a streak in the `Calendar`.
+
+	func (c *Calendar) addToStreak(today time.Time) (err error) {
+		create := true
+		err = c.iterateEvents(func(e *calendar.Event, start, end time.Time) error {
+			if start.After(today) {
+				if start.Add(-day).Equal(today) {
+					// This event starts tomorrow, update it to start today.
+					create = false
+					e.Start.Date = today.Format(dateFormat)
+					_, err = c.Events.Update(c.Id, e.Id, e).Do()
+					return err
+				}
+				// This event is too far in the future.
+				return Continue
+			}
+			if end.After(today) {
+				// Today fits inside this event, nothing to do.
+				create = false
+				return nil
+			}
+	// ...
+
+* Adding days to a streak (2/2)
+
+	// ...
+			if end.Equal(today) {
+				// This event ends today, update it to end tomorrow.
+				create = false
+				e.End.Date = today.Add(day).Format(dateFormat)
+				_, err = c.Events.Update(c.Id, e.Id, e).Do()
+				if err != nil {
+					return err
+				}
+			}
+			return Continue
+		})
+		if err == nil && create {
+			// No existing events cover or are adjacent to today, so create one.
+			err = c.createEvent(today, today.Add(day))
+		}
+		return
+	}
+
+(This code is slightly abridged; the real program also combines adjacent events.)
+
+* Removing days from a streak (1/2)
+
+The `removeFromStreak` function is just like `addToStreak`.
+
+	func (c *Calendar) removeFromStreak(today time.Time) (err error) {
+		err = c.iterateEvents(func(e *calendar.Event, start, end time.Time) error {
+			if start.After(today) || end.Before(today) || end.Equal(today) {
+				// This event is too far in the future or past.
+				return Continue
+			}
+			if start.Equal(today) {
+				if end.Equal(today.Add(day)) {
+					// Single day event; remove it.
+					return c.Events.Delete(c.Id, e.Id).Do()
+				}
+				// Starts today; shorten to begin tomorrow.
+				e.Start.Date = start.Add(day).Format(dateFormat)
+				_, err := c.Events.Update(c.Id, e.Id, e).Do()
+				return err
+			}
+			if end.Equal(today.Add(day)) {
+				// Ends tomorrow; shorten to end today.
+				e.End.Date = today.Format(dateFormat)
+				_, err := c.Events.Update(c.Id, e.Id, e).Do()
+				return err
+			}
+
+* Removing days from a streak (2/2)
+
+	// ...
+			// Split into two events.
+			// Shorten first event to end today.
+			e.End.Date = today.Format(dateFormat)
+			_, err = c.Events.Update(c.Id, e.Id, e).Do()
+			if err != nil {
+				return err
+			}
+			// Create second event that starts tomorrow.
+			return c.createEvent(today.Add(day), end)
+		})
+		return
+	}
+
+* Authentication
+
+Streak uses OAuth2 to authenticate with the Calendar API.
+
+OAuth2 in a nutshell:
+
+- Application directs Client to Service to authenticate
+- Client tells Service "OK, Application can represent me"
+- Service redirects Client to Application, with a `code` query parameter
+- Application exchanges `code` with Service for an Access Token
+- Application provides Access Token when using Service to access Client's data
+
+Streak uses the `goauth2` package, which helps with the first, fourth, and final steps.
+
+	import "code.google.com/p/goauth2/oauth"
+
+* OAuth2 configuration
+
+The client ID and secret are obtained from the Google APIs Console. The `Scope` specifies the service to access (Calendar), while the `AuthURL` and `TokenURL` point to Google's OAuth2 service.
+
+.code streak.go /config :=/,/}/
+
+The `TokenCache` field and `oauth.CacheFile` helpers transparently store the access token on disk. A flag specifies the location of the cache file:
+
+	defaultCacheFile = filepath.Join(os.Getenv("HOME"), ".streak-request-token")
+	cachefile        = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
+
+* Setting up an authenticated service
+
+At startup, try to read the cached token.
+If that fails for any reason, call `authenticate` to go do the OAuth2 flow.
+If it succeeds, store the token in the transport and build a Calendar service.
+
+.code streak.go /transport :=/,/calendar.New/
+
+* The authenticate function
+
+.code oauth.go /func authenticate/,/^}/
+
+* Demo
