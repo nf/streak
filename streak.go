@@ -60,7 +60,7 @@ func main() {
 	if token, err := config.TokenCache.Token(); err != nil {
 		err = authenticate(transport)
 		if err != nil {
-			log.Fatalln("Flow:", err)
+			log.Fatalln("authenticate:", err)
 		}
 	} else {
 		transport.Token = token
