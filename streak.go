@@ -19,6 +19,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -90,6 +91,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	var longest time.Duration
+	cal.iterateEvents(func(e *calendar.Event, start, end time.Time) error {
+		if d := end.Sub(start); d > longest {
+			longest = d
+		}
+		return Continue
+	})
+	fmt.Println("Longest streak:", int(longest/day), "days")
 }
 
 type Calendar struct {
