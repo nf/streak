@@ -47,7 +47,7 @@ func authenticate(transport *oauth.Transport) error {
 		listener.Close()            // shut down HTTP server
 	}))
 
-	transport.Config.RedirectURL = fmt.Sprintf("http://%s/", listener.Addr().String())
+	transport.Config.RedirectURL = fmt.Sprintf("http://%s/", listener.Addr())
 	url := transport.Config.AuthCodeURL("")
 	if err := openURL(url); err != nil {
 		fmt.Fprintln(os.Stderr, visitMessage)
