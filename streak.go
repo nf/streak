@@ -57,13 +57,31 @@ func main() {
 
 	transport := &oauth.Transport{Config: config}
 
-	if token, err := config.TokenCache.Token(); err != nil {
+	var err error
+	transport.Token, err = config.TokenCache.Token()
+	if err != nil {
+		// cannot read token cache (and the lib doesn't let us
+		// differentiate errors nicely, just put in a dummy token
+		transport.Token = &oauth.Token{}
+	}
+
+	if !transport.Token.Expiry.IsZero() && transport.Token.Expiry.Before(time.Now()) {
+		// cached token has expired, try to refresh
+		// TODO clock drift
+		err = transport.Refresh()
+		if err != nil && err.Error() != "OAuthError: updateToken: 400 Bad Request" {
+			// refreshing failed (don't really care why, we seem to get HTTP 400 errors), we'll reauthenticate below
+			log.Fatalln("cannot refresh token:", err)
+		}
+	}
+
+	if transport.Token.AccessToken == "" ||
+		(!transport.Token.Expiry.IsZero() && transport.Token.Expiry.Before(time.Now())) {
+		// never authenticated, or still expired after failed refresh attempt
 		err = authenticate(transport)
 		if err != nil {
 			log.Fatalln("authenticate:", err)
 		}
-	} else {
-		transport.Token = token
 	}
 
 	service, err := calendar.New(transport.Client())
