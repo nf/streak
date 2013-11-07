@@ -40,7 +40,7 @@ const (
 var (
 	defaultConfigFile = filepath.Join(os.Getenv("HOME"), ".config", "streak", "config.json")
 	configfile        = flag.String("configfile", defaultConfigFile, "Config file")
-	defaultCacheFile  = filepath.Join(os.Getenv("HOME"), ".streak-request-token")
+	defaultCacheFile  = filepath.Join(os.Getenv("HOME"), ".cache", "streak-request-token")
 	cachefile         = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
 	offset            = flag.Int("offset", 0, "Day offset")
 	remove            = flag.Bool("remove", false, "Remove day from streak")
