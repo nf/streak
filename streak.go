@@ -68,12 +68,12 @@ func main() {
 
 	service, err := calendar.New(transport.Client())
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("instantiate calendar:", err)
 	}
 
 	calId, err := streakCalendarId(service)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("get calendar id:", err)
 	}
 
 	cal := &Calendar{
@@ -89,7 +89,7 @@ func main() {
 		err = cal.addToStreak(today)
 	}
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("edit calendar", err)
 	}
 
 	var longest time.Duration
