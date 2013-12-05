@@ -27,6 +27,7 @@ import (
 
 	"code.google.com/p/goauth2/oauth"
 	"code.google.com/p/google-api-go-client/calendar/v3"
+	"encoding/json"
 )
 
 const (
@@ -37,18 +38,57 @@ const (
 )
 
 var (
-	defaultCacheFile = filepath.Join(os.Getenv("HOME"), ".streak-request-token")
-	cachefile        = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
-	offset           = flag.Int("offset", 0, "Day offset")
-	remove           = flag.Bool("remove", false, "Remove day from streak")
+	defaultConfigFile = filepath.Join(os.Getenv("HOME"), ".config", "streak", "config.json")
+	configfile        = flag.String("configfile", defaultConfigFile, "Config file")
+	defaultCacheFile  = filepath.Join(os.Getenv("HOME"), ".cache", "streak-request-token")
+	cachefile         = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
+	offset            = flag.Int("offset", 0, "Day offset")
+	remove            = flag.Bool("remove", false, "Remove day from streak")
 )
+
+type Config struct {
+	OAuthId     string
+	OAuthSecret string
+}
+
+func loadConfig() (*Config, error) {
+	conf := Config{
+		OAuthId:     "120233572441-d8vmojicfgje467joivr5a7j52dg2gnc.apps.googleusercontent.com",
+		OAuthSecret: "vfZkluBV6PTfGBWxfIIyXbMS",
+	}
+
+	f, err := os.Open(*configfile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// just use defaults
+			return &conf, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	dec := json.NewDecoder(f)
+	err = dec.Decode(&conf)
+	if err != nil {
+		return nil, err
+	}
+
+	return &conf, nil
+}
 
 func main() {
 	flag.Parse()
 
+	var appconf *Config
+	var err error
+	appconf, err = loadConfig()
+	if err != nil {
+		log.Fatalln("cannot load config:", err)
+	}
+
 	config := &oauth.Config{
-		ClientId:     "120233572441-d8vmojicfgje467joivr5a7j52dg2gnc.apps.googleusercontent.com",
-		ClientSecret: "vfZkluBV6PTfGBWxfIIyXbMS",
+		ClientId:     appconf.OAuthId,
+		ClientSecret: appconf.OAuthSecret,
 		Scope:        "https://www.googleapis.com/auth/calendar",
 		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
 		TokenURL:     "https://accounts.google.com/o/oauth2/token",
@@ -57,23 +97,42 @@ func main() {
 
 	transport := &oauth.Transport{Config: config}
 
-	if token, err := config.TokenCache.Token(); err != nil {
+	transport.Token, err = config.TokenCache.Token()
+	if err != nil {
+		// cannot read token cache (and the lib doesn't let us
+		// differentiate errors nicely, just put in a dummy token
+		transport.Token = &oauth.Token{}
+	}
+
+	if !transport.Token.Expiry.IsZero() &&
+		transport.Token.Expiry.Before(time.Now()) &&
+		transport.Token.RefreshToken != "" {
+		// cached token has expired and we have refresh token, try to refresh
+		// TODO clock drift
+		err = transport.Refresh()
+		if err != nil && err.Error() != "OAuthError: updateToken: 400 Bad Request" {
+			// refreshing failed (don't really care why, we seem to get HTTP 400 errors), we'll reauthenticate below
+			log.Fatalln("cannot refresh token:", err)
+		}
+	}
+
+	if transport.Token.AccessToken == "" ||
+		(!transport.Token.Expiry.IsZero() && transport.Token.Expiry.Before(time.Now())) {
+		// never authenticated, or still expired after failed refresh attempt
 		err = authenticate(transport)
 		if err != nil {
 			log.Fatalln("authenticate:", err)
 		}
-	} else {
-		transport.Token = token
 	}
 
 	service, err := calendar.New(transport.Client())
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("instantiate calendar:", err)
 	}
 
 	calId, err := streakCalendarId(service)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("get calendar id:", err)
 	}
 
 	cal := &Calendar{
@@ -89,7 +148,7 @@ func main() {
 		err = cal.addToStreak(today)
 	}
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("edit calendar", err)
 	}
 
 	var longest time.Duration
