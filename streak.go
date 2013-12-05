@@ -104,8 +104,10 @@ func main() {
 		transport.Token = &oauth.Token{}
 	}
 
-	if !transport.Token.Expiry.IsZero() && transport.Token.Expiry.Before(time.Now()) {
-		// cached token has expired, try to refresh
+	if !transport.Token.Expiry.IsZero() &&
+		transport.Token.Expiry.Before(time.Now()) &&
+		transport.Token.RefreshToken != "" {
+		// cached token has expired and we have refresh token, try to refresh
 		// TODO clock drift
 		err = transport.Refresh()
 		if err != nil && err.Error() != "OAuthError: updateToken: 400 Bad Request" {
