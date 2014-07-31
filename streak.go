@@ -30,10 +30,10 @@ import (
 )
 
 const (
-	dateFormat = "2006-01-02"
-	day        = time.Second * 60 * 60 * 24
-	calSummary = "Streaks"
-	evtSummary = "Streak"
+	dateFormat        = "2006-01-02"
+	day               = time.Second * 60 * 60 * 24
+	defaultCalSummary = "Streaks"
+	defaultEvtSummary = "Streak"
 )
 
 var (
@@ -41,6 +41,9 @@ var (
 	cacheFile        = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
 	offset           = flag.Int("offset", 0, "Day offset")
 	remove           = flag.Bool("remove", false, "Remove day from streak")
+	calendarName     = flag.String("cal", defaultCalSummary, "Streak calendar name")
+	eventName        = flag.String("event", defaultEvtSummary, "Streak event name")
+	createCalendar   = flag.Bool("create", false, "Create calendar if missing")
 )
 
 func main() {
@@ -211,7 +214,7 @@ func (c *Calendar) iterateEvents(fn iteratorFunc) error {
 			return err
 		}
 		for _, e := range events.Items {
-			if e.Start.Date == "" || e.End.Date == "" || e.Summary != evtSummary {
+			if e.Start.Date == "" || e.End.Date == "" || e.Summary != *eventName {
 				// Skip non-all-day event or non-streak events.
 				continue
 			}
@@ -229,7 +232,7 @@ func (c *Calendar) iterateEvents(fn iteratorFunc) error {
 
 func (c *Calendar) createEvent(start, end time.Time) error {
 	e := &calendar.Event{
-		Summary: evtSummary,
+		Summary: *eventName,
 		Start:   &calendar.EventDateTime{Date: start.Format(dateFormat)},
 		End:     &calendar.EventDateTime{Date: end.Format(dateFormat)},
 	}
@@ -251,9 +254,19 @@ func streakCalendarId(service *calendar.Service) (string, error) {
 		return "", err
 	}
 	for _, entry := range list.Items {
-		if entry.Summary == calSummary {
+		if entry.Summary == *calendarName {
 			return entry.Id, nil
 		}
 	}
-	return "", errors.New("couldn't find calendar named 'Streaks'")
+
+	if *createCalendar {
+		cal, err := service.Calendars.Insert(&calendar.Calendar{Summary: *calendarName}).Do()
+		if err != nil {
+			return "", err
+		}
+
+		return cal.Id, nil
+	}
+
+	return "", errors.New(fmt.Sprintf("couldn't find calendar named '%s'", *calendarName))
 }
