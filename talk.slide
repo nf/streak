@@ -356,43 +356,4 @@ The `removeFromStreak` function is just like `addToStreak`.
 		return
 	}
 
-* Authentication
-
-Streak uses OAuth2 to authenticate with the Calendar API.
-
-OAuth2 in a nutshell:
-
-- Application directs Client to Service to authenticate
-- Client tells Service "OK, Application can represent me"
-- Service redirects Client to Application, with a `code` query parameter
-- Application exchanges `code` with Service for an Access Token
-- Application provides Access Token when using Service to access Client's data
-
-Streak uses the `goauth2` package, which helps with the first, fourth, and final steps.
-
-	import "code.google.com/p/goauth2/oauth"
-
-* OAuth2 configuration
-
-The client ID and secret are obtained from the Google APIs Console. The `Scope` specifies the service to access (Calendar), while the `AuthURL` and `TokenURL` point to Google's OAuth2 service.
-
-.code streak.go /config :=/,/}/
-
-The `TokenCache` field and `oauth.CacheFile` helpers transparently store the access token on disk. A flag specifies the location of the cache file:
-
-	defaultCacheFile = filepath.Join(os.Getenv("HOME"), ".streak-request-token")
-	cachefile        = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
-
-* Setting up an authenticated service
-
-At startup, try to read the cached token.
-If that fails for any reason, call `authenticate` to go do the OAuth2 flow.
-If it succeeds, store the token in the transport and build a Calendar service.
-
-.code streak.go /transport :=/,/calendar.New/
-
-* The authenticate function
-
-.code oauth.go /func authenticate/,/^}/
-
 * Demo
