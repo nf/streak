@@ -21,11 +21,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"code.google.com/p/goauth2/oauth"
 	"code.google.com/p/google-api-go-client/calendar/v3"
 )
 
@@ -38,7 +38,7 @@ const (
 
 var (
 	defaultCacheFile = filepath.Join(os.Getenv("HOME"), ".streak-request-token")
-	cachefile        = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
+	cacheFile        = flag.String("cachefile", defaultCacheFile, "Authentication token cache file")
 	offset           = flag.Int("offset", 0, "Day offset")
 	remove           = flag.Bool("remove", false, "Remove day from streak")
 )
@@ -46,27 +46,21 @@ var (
 func main() {
 	flag.Parse()
 
-	config := &oauth.Config{
-		ClientId:     "120233572441-d8vmojicfgje467joivr5a7j52dg2gnc.apps.googleusercontent.com",
-		ClientSecret: "vfZkluBV6PTfGBWxfIIyXbMS",
-		Scope:        "https://www.googleapis.com/auth/calendar",
-		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
-		TokenURL:     "https://accounts.google.com/o/oauth2/token",
-		TokenCache:   oauth.CacheFile(*cachefile),
+	tok, err := readToken(*cacheFile)
+	if err != nil && !os.IsNotExist(err) {
+		log.Printf("reading token cache: %v", err)
+	}
+	transport, err := oauthTransport(tok)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := writeToken(*cacheFile, transport.Token()); err != nil {
+		log.Fatalf("writing token cache: %v", err)
 	}
 
-	transport := &oauth.Transport{Config: config}
+	client := &http.Client{Transport: transport}
 
-	if token, err := config.TokenCache.Token(); err != nil {
-		err = authenticate(transport)
-		if err != nil {
-			log.Fatalln("authenticate:", err)
-		}
-	} else {
-		transport.Token = token
-	}
-
-	service, err := calendar.New(transport.Client())
+	service, err := calendar.New(client)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -231,7 +225,6 @@ func (c *Calendar) iterateEvents(fn iteratorFunc) error {
 			return nil
 		}
 	}
-	panic("unreachable")
 }
 
 func (c *Calendar) createEvent(start, end time.Time) error {

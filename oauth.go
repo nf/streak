@@ -17,14 +17,17 @@ limitations under the License.
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
 
-	"code.google.com/p/goauth2/oauth"
+	"github.com/golang/oauth2"
+	"github.com/golang/oauth2/google"
 )
 
 const (
@@ -34,21 +37,43 @@ const (
 	closeMessage  = "You may now close this browser window."
 )
 
-func authenticate(transport *oauth.Transport) error {
+func oauthConfig(redirectURL string) (*oauth2.Config, error) {
+	return google.NewConfig(&oauth2.Options{
+		ClientID:     "120233572441-d8vmojicfgje467joivr5a7j52dg2gnc.apps.googleusercontent.com",
+		ClientSecret: "vfZkluBV6PTfGBWxfIIyXbMS",
+		RedirectURL:  redirectURL,
+		Scopes:       []string{"https://www.googleapis.com/auth/calendar"},
+	})
+}
+
+func oauthTransport(existing *oauth2.Token) (oauth2.Transport, error) {
+	if existing != nil {
+		cfg, err := oauthConfig("http://example.org/ignored")
+		if err != nil {
+			return nil, err
+		}
+		t := cfg.NewTransport()
+		t.SetToken(existing)
+		return t, nil
+	}
+
 	code := make(chan string)
 
-	listener, err := net.Listen("tcp", "localhost:0")
+	l, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	go http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	defer l.Close()
+	go http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, closeMessage)
 		code <- r.FormValue("code") // send code to OAuth flow
-		listener.Close()            // shut down HTTP server
 	}))
 
-	transport.Config.RedirectURL = fmt.Sprintf("http://%s/", listener.Addr().String())
-	url := transport.Config.AuthCodeURL("")
+	cfg, err := oauthConfig(fmt.Sprintf("http://%s/", l.Addr().String()))
+	if err != nil {
+		return nil, err
+	}
+	url := cfg.AuthCodeURL("")
 	if err := openURL(url); err != nil {
 		fmt.Fprintln(os.Stderr, visitMessage)
 	} else {
@@ -57,8 +82,7 @@ func authenticate(transport *oauth.Transport) error {
 	fmt.Fprintf(os.Stderr, "\n%s\n\n", url)
 	fmt.Fprintln(os.Stderr, resumeMessage)
 
-	_, err = transport.Exchange(<-code)
-	return err
+	return cfg.NewTransportWithCode(<-code)
 }
 
 func openURL(url string) error {
@@ -75,4 +99,24 @@ func openURL(url string) error {
 	}
 	return err
 
+}
+
+func readToken(file string) (*oauth2.Token, error) {
+	b, err := ioutil.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	var tok oauth2.Token
+	if err := json.Unmarshal(b, &tok); err != nil {
+		return nil, err
+	}
+	return &tok, nil
+}
+
+func writeToken(file string, tok *oauth2.Token) error {
+	b, err := json.Marshal(tok)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(file, b, 0600)
 }
