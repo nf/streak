@@ -46,7 +46,7 @@ func oauthConfig(redirectURL string) (*oauth2.Config, error) {
 	})
 }
 
-func oauthTransport(existing *oauth2.Token) (oauth2.Transport, error) {
+func oauthTransport(existing *oauth2.Token) (*oauth2.Transport, error) {
 	if existing != nil {
 		cfg, err := oauthConfig("http://example.org/ignored")
 		if err != nil {
@@ -73,7 +73,7 @@ func oauthTransport(existing *oauth2.Token) (oauth2.Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	url := cfg.AuthCodeURL("")
+	url := cfg.AuthCodeURL("", "online", "auto")
 	if err := openURL(url); err != nil {
 		fmt.Fprintln(os.Stderr, visitMessage)
 	} else {
