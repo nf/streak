@@ -21,12 +21,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
+	//"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"code.google.com/p/google-api-go-client/calendar/v3"
+	//"code.google.com/p/google-api-go-client/calendar/v3"
+	"google.golang.org/api/calendar/v3"
 )
 
 const (
@@ -53,15 +54,17 @@ func main() {
 	if err != nil && !os.IsNotExist(err) {
 		log.Printf("reading token cache: %v", err)
 	}
-	transport, err := oauthTransport(tok)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := writeToken(*cacheFile, transport.Token()); err != nil {
+	//transport, err := oauthTransport(tok)
+	client,tok := oauthClientToken(tok)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//if err := writeToken(*cacheFile, transport.Token()); err != nil {
+	if err := writeToken(*cacheFile, tok); err != nil {
 		log.Fatalf("writing token cache: %v", err)
 	}
 
-	client := &http.Client{Transport: transport}
+	//client := &http.Client{Transport: transport}
 
 	service, err := calendar.New(client)
 	if err != nil {
@@ -80,6 +83,8 @@ func main() {
 
 	today := time.Now().Add(time.Duration(*offset) * day)
 	today = parseDate(today.Format(dateFormat)) // normalize
+	
+	fmt.Println("Remove: ",*remove)
 	if *remove {
 		err = cal.removeFromStreak(today)
 	} else {
@@ -101,7 +106,7 @@ func main() {
 
 type Calendar struct {
 	Id string
-	*calendar.Service
+	*calendar.Service  //embedded field - files and methods of calendar.Service promoted to Calendar struct
 }
 
 func (c *Calendar) addToStreak(today time.Time) (err error) {
@@ -111,6 +116,7 @@ func (c *Calendar) addToStreak(today time.Time) (err error) {
 	)
 	err = c.iterateEvents(func(e *calendar.Event, start, end time.Time) error {
 		if prev != nil {
+			fmt.Println("Prev != nil")
 			// We extended the previous event; merge it with this one?
 			if prev.End.Date == e.Start.Date {
 				// Merge events.
@@ -129,6 +135,7 @@ func (c *Calendar) addToStreak(today time.Time) (err error) {
 		if start.After(today) {
 			if start.Add(-day).Equal(today) {
 				// This event starts tomorrow, update it to start today.
+				fmt.Println("Start Tomorrow")
 				create = false
 				e.Start.Date = today.Format(dateFormat)
 				_, err = c.Events.Update(c.Id, e.Id, e).Do()
@@ -138,15 +145,17 @@ func (c *Calendar) addToStreak(today time.Time) (err error) {
 			return Continue
 		}
 		if end.After(today) {
+			fmt.Println("End after today")
 			// Today fits inside this event, nothing to do.
 			create = false
 			return nil
 		}
 		if end.Equal(today) {
+			fmt.Println("End today")
 			// This event ends today, update it to end tomorrow.
 			create = false
 			e.End.Date = today.Add(day).Format(dateFormat)
-			_, err = c.Events.Update(c.Id, e.Id, e).Do()
+			_, err := c.Events.Update(c.Id, e.Id, e).Do()
 			if err != nil {
 				return err
 			}
@@ -164,11 +173,14 @@ func (c *Calendar) addToStreak(today time.Time) (err error) {
 
 func (c *Calendar) removeFromStreak(today time.Time) (err error) {
 	err = c.iterateEvents(func(e *calendar.Event, start, end time.Time) error {
+		fmt.Println("Remove Start")
 		if start.After(today) || end.Before(today) || end.Equal(today) {
 			// This event is too far in the future or past.
+			fmt.Println("Too far past or future")
 			return Continue
 		}
 		if start.Equal(today) {
+			fmt.Println("Starts today")
 			if end.Equal(today.Add(day)) {
 				// Single day event; remove it.
 				return c.Events.Delete(c.Id, e.Id).Do()
@@ -179,11 +191,13 @@ func (c *Calendar) removeFromStreak(today time.Time) (err error) {
 			return err
 		}
 		if end.Equal(today.Add(day)) {
+			fmt.Println("Ends today")
 			// Ends tomorrow; shorten to end today.
 			e.End.Date = today.Format(dateFormat)
 			_, err := c.Events.Update(c.Id, e.Id, e).Do()
 			return err
 		}
+		fmt.Println("Remove End")
 
 		// Split into two events.
 		// Shorten first event to end today.
@@ -216,9 +230,11 @@ func (c *Calendar) iterateEvents(fn iteratorFunc) error {
 		for _, e := range events.Items {
 			if e.Start.Date == "" || e.End.Date == "" || e.Summary != *eventName {
 				// Skip non-all-day event or non-streak events.
+				fmt.Println("Not all day: ", e.Summary, e.Start.Date,e.End.Date)
 				continue
 			}
 			start, end := parseDate(e.Start.Date), parseDate(e.End.Date)
+			fmt.Println("All day: ", e.Summary, e.Start.Date,e.End.Date)
 			if err := fn(e, start, end); err != Continue {
 				return err
 			}
@@ -235,6 +251,7 @@ func (c *Calendar) createEvent(start, end time.Time) error {
 		Summary: *eventName,
 		Start:   &calendar.EventDateTime{Date: start.Format(dateFormat)},
 		End:     &calendar.EventDateTime{Date: end.Format(dateFormat)},
+		Reminders: &calendar.EventReminders{UseDefault: false},
 	}
 	_, err := c.Events.Insert(c.Id, e).Do()
 	return err

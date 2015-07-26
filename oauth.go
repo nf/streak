@@ -19,15 +19,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
-
-	"github.com/golang/oauth2"
-	"github.com/golang/oauth2/google"
+	"time"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	//"github.com/golang/oauth2"
+	//"github.com/golang/oauth2/google"
 )
 
 const (
@@ -37,43 +40,64 @@ const (
 	closeMessage  = "You may now close this browser window."
 )
 
-func oauthConfig(redirectURL string) (*oauth2.Config, error) {
-	return google.NewConfig(&oauth2.Options{
-		ClientID:     "120233572441-d8vmojicfgje467joivr5a7j52dg2gnc.apps.googleusercontent.com",
-		ClientSecret: "vfZkluBV6PTfGBWxfIIyXbMS",
+func oauthConfig(redirectURL string) (*oauth2.Config ) {
+	//return google.NewConfig(&oauth2.Options{
+	return &oauth2.Config{
+		ClientID:     "CLIENT_ID.apps.googleusercontent.com",
+		ClientSecret: "CLIENT_SECRET",
 		RedirectURL:  redirectURL,
 		Scopes:       []string{"https://www.googleapis.com/auth/calendar"},
-	})
+		Endpoint:  google.Endpoint,
+	}
 }
 
-func oauthTransport(existing *oauth2.Token) (*oauth2.Transport, error) {
+//func oauthTransport(existing *oauth2.Token) (*oauth2.Transport, error) {
+func oauthClientToken(existing *oauth2.Token) (*http.Client, *oauth2.Token) {
 	if existing != nil {
-		cfg, err := oauthConfig("http://example.org/ignored")
-		if err != nil {
-			return nil, err
-		}
-		t := cfg.NewTransport()
-		t.SetToken(existing)
-		return t, nil
+		cfg := oauthConfig("localhost")
+		//if err != nil {
+		//	return nil, err
+		//}
+		//t := cfg.NewTransport()
+		//t.SetToken(existing)
+		//return t, nil
+		client := cfg.Client(oauth2.NoContext, existing)
+		return client, existing
 	}
 
-	code := make(chan string)
+	ch := make(chan string)
+	randState := fmt.Sprintf("st%d", time.Now().UnixNano())
 
 	l, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
-		return nil, err
+		return nil, nil //, err
 	}
 	defer l.Close()
 	go http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, closeMessage)
-		code <- r.FormValue("code") // send code to OAuth flow
+		if r.URL.Path == "/favicon.ico" {
+			http.Error(w, "", 404)
+			return
+		}
+		if r.FormValue("state") != randState {
+			log.Printf("State doesn't match: req = %#v", r)
+			http.Error(w, "", 500)
+			return
+		}
+		//fmt.Fprint(w, closeMessage)
+		//code <- r.FormValue("code") // send code to OAuth flow
+		if code := r.FormValue("code"); code != "" {
+			fmt.Fprintf(w, "<h1>Success</h1>Authorized.")
+			w.(http.Flusher).Flush()
+			ch <- code
+			return
+		}
 	}))
 
-	cfg, err := oauthConfig(fmt.Sprintf("http://%s/", l.Addr().String()))
+	cfg := oauthConfig(fmt.Sprintf("http://%s/", l.Addr().String()))
 	if err != nil {
-		return nil, err
+		return nil, nil //, err
 	}
-	url := cfg.AuthCodeURL("", "online", "auto")
+	url := cfg.AuthCodeURL(randState, oauth2.AccessTypeOffline)
 	if err := openURL(url); err != nil {
 		fmt.Fprintln(os.Stderr, visitMessage)
 	} else {
@@ -82,7 +106,18 @@ func oauthTransport(existing *oauth2.Token) (*oauth2.Transport, error) {
 	fmt.Fprintf(os.Stderr, "\n%s\n\n", url)
 	fmt.Fprintln(os.Stderr, resumeMessage)
 
-	return cfg.NewTransportWithCode(<-code)
+	//return cfg.NewTransportWithCode(<-code)
+	//var code string
+	//if _, err := fmt.Scan(&code); err != nil {
+	//	log.Fatal(err)
+	//}
+	tok, err := cfg.Exchange(oauth2.NoContext, <-ch)
+	if err != nil {
+		fmt.Println("Fatal error")
+		log.Fatal(err)
+	}
+	client := cfg.Client(oauth2.NoContext, tok)
+	return client, tok
 }
 
 func openURL(url string) error {
